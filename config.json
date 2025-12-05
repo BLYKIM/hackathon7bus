@@ -1,0 +1,5 @@
+{
+  "openai_api_key": "API_KEY",
+  "max_reviews": 200,
+  "model": "API_MODEL"
+}

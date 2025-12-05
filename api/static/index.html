@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>앱 리뷰 수집·분석 데모</title>
+  <style>
+    :root {
+      --bg: #f7f9fb;
+      --card: #ffffff;
+      --border: #dfe3e8;
+      --accent: #2563eb;
+      --text: #111827;
+      --muted: #6b7280;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: 'Inter', Arial, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+    header { padding: 24px 32px; background: #fff; border-bottom: 1px solid var(--border); }
+    h1 { margin: 0 0 6px 0; font-size: 24px; }
+    main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
+    label { display: block; margin-top: 10px; font-weight: 600; }
+    input, select { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+    button { background: var(--accent); color: #fff; border: none; padding: 12px 16px; border-radius: 10px; font-weight: 700; cursor: pointer; margin-top: 16px; width: 100%; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .section-title { font-size: 16px; font-weight: 700; margin: 0 0 8px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    #loading { display: none; text-align: center; padding: 40px; }
+    #resultSection { display: none; }
+    .pill { display: inline-block; background: #e5e7eb; color: #111827; padding: 4px 10px; border-radius: 999px; font-size: 12px; margin-right: 6px; }
+    .list-item { margin: 8px 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: #f9fafb; }
+    .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+    pre { background: #f6f8fa; padding: 12px; border-radius: 8px; overflow: auto; }
+    .pill-blue { background: #e0ecff; color: #1f4b99; }
+    .pill-green { background: #e5f8ed; color: #11633a; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>앱 리뷰 수집·분석</h1>
+  </header>
+
+  <main>
+    <section id="formSection" class="card">
+      <div class="section-title">수집/분석 요청</div>
+      <form id="fetchForm">
+        <label>스토어</label>
+        <select id="store">
+          <option value="apple">Apple App Store</option>
+          <option value="google">Google Play</option>
+        </select>
+
+        <label>앱 ID (숫자 또는 패키지명)</label>
+        <input id="appId" placeholder="예: 544007664 또는 com.google.android.youtube" />
+
+        <label>앱 이름 (ID 대신 검색할 때 사용)</label>
+        <input id="appName" placeholder="예: TikTok" />
+
+        <div class="grid">
+          <div>
+            <label>국가 코드</label>
+            <input id="country" value="kr" />
+          </div>
+          <div>
+            <label>페이지 수 (기본 2, 약 200개 내외)</label>
+            <input id="maxPages" type="number" value="2" min="1" max="5" />
+          </div>
+        </div>
+
+        <button type="submit" id="submitBtn">수집 및 한국어 요약</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="section-title">자주 쓰는 앱 ID 참고</div>
+      <div class="two-col" id="examplesContainer"></div>
+    </section>
+
+    <section id="loading" class="card">
+      <div class="section-title">분석 중...</div>
+      <div class="muted">리뷰를 가져오고 요약하고 있습니다. 잠시만 기다려주세요.</div>
+    </section>
+
+    <section id="resultSection" class="card">
+      <div class="section-title">요약 결과</div>
+      <div id="llmSummary" class="muted">-</div>
+
+      <div class="section-title" style="margin-top:12px;">통계</div>
+      <div class="grid" id="statsGrid"></div>
+
+      <div class="two-col" style="margin-top:12px;">
+        <div>
+          <div class="section-title">상위 긍정 리뷰</div>
+          <div id="topPos"></div>
+        </div>
+        <div>
+          <div class="section-title">상위 부정 리뷰</div>
+          <div id="topNeg"></div>
+        </div>
+      </div>
+
+      <button id="resetBtn" style="margin-top:16px; background:#111827;">처음으로</button>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById('fetchForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const loading = document.getElementById('loading');
+    const resultSection = document.getElementById('resultSection');
+    const formSection = document.getElementById('formSection');
+    const llmSummaryEl = document.getElementById('llmSummary');
+    const statsGrid = document.getElementById('statsGrid');
+    const topPosEl = document.getElementById('topPos');
+    const topNegEl = document.getElementById('topNeg');
+    const resetBtn = document.getElementById('resetBtn');
+    const examplesContainer = document.getElementById('examplesContainer');
+
+    function show(section) {
+      formSection.style.display = section === 'form' ? 'block' : 'none';
+      loading.style.display = section === 'loading' ? 'block' : 'none';
+      resultSection.style.display = section === 'result' ? 'block' : 'none';
+    }
+
+    function renderStats(stats) {
+      statsGrid.innerHTML = '';
+      const cards = [
+        { label: '총 리뷰 수', value: stats.total_reviews },
+        { label: '평균 평점', value: stats.avg_rating?.toFixed(2) ?? '-' },
+        { label: '평균 감성 점수', value: stats.avg_sentiment_score?.toFixed(2) ?? '-' },
+      ];
+      const dist = stats.rating_counts || {};
+      const distStr = Object.keys(dist).sort((a,b)=>Number(b)-Number(a)).map(k => `${k}★: ${dist[k]}`).join(', ');
+      cards.push({ label: '평점 분포', value: distStr });
+      cards.forEach(c => {
+        const div = document.createElement('div');
+        div.className = 'list-item';
+        div.innerHTML = `<div class="muted">${c.label}</div><div style="font-size:18px;font-weight:700;">${c.value}</div>`;
+        statsGrid.appendChild(div);
+      });
+    }
+
+    function renderTop(list, target) {
+      target.innerHTML = '';
+      if (!list || list.length === 0) {
+        target.innerHTML = '<div class="muted">데이터 없음</div>';
+        return;
+      }
+      list.forEach(r => {
+        const div = document.createElement('div');
+        div.className = 'list-item';
+        div.innerHTML = `
+          <div><span class="pill">${r.rating ?? '-'}★</span> <span class="muted">${r.created_at || ''}</span></div>
+          <div style="font-weight:700; margin-top:4px;">${r.title || '(제목 없음)'}</div>
+          <div style="margin-top:4px;">${r.body || ''}</div>
+        `;
+        target.appendChild(div);
+      });
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      submitBtn.disabled = true;
+      show('loading');
+
+      const payload = {
+        store: document.getElementById('store').value,
+        app_id: document.getElementById('appId').value || null,
+        app_name: document.getElementById('appName').value || null,
+        country: document.getElementById('country').value || 'kr',
+        max_pages: Number(document.getElementById('maxPages').value || 2),
+        max_items: 200,
+        install_missing: true,
+      };
+
+      try {
+        const res = await fetch('/fetch-analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(JSON.stringify(data));
+
+        let parsed = {};
+        try { parsed = JSON.parse(data.summary); } catch { parsed = { llm: {}, stats: {} }; }
+        const stats = parsed.stats || {};
+        let llmObj = parsed.llm || {};
+        // backward compatibility for older llm_summary shape
+        if ((!llmObj || Object.keys(llmObj).length === 0) && parsed.llm_summary) {
+          const llmRaw = parsed.llm_summary;
+          if (typeof llmRaw === 'string') {
+            llmObj = tryParseLLM(llmRaw);
+          } else if (typeof llmRaw === 'object') {
+            llmObj = llmRaw;
+          }
+        }
+        // If current llm missing bullets/insights but has raw, attempt to parse raw
+        const missingKey = (!llmObj.bullets || llmObj.bullets.length === 0 || !llmObj.team_insights || !llmObj.summary_text);
+        if (llmObj.raw) {
+          const parsedRaw = tryParseLLM(llmObj.raw);
+          llmObj = {
+            ...llmObj,
+            ...parsedRaw,
+            raw: llmObj.raw,
+            bullets: (llmObj.bullets && llmObj.bullets.length) ? llmObj.bullets : (parsedRaw.bullets || []),
+            team_insights: llmObj.team_insights && Object.keys(llmObj.team_insights).length ? llmObj.team_insights : (parsedRaw.team_insights || {}),
+            top_positive_reviews: (llmObj.top_positive_reviews && llmObj.top_positive_reviews.length) ? llmObj.top_positive_reviews : (parsedRaw.top_positive_reviews || []),
+            top_negative_reviews: (llmObj.top_negative_reviews && llmObj.top_negative_reviews.length) ? llmObj.top_negative_reviews : (parsedRaw.top_negative_reviews || []),
+            summary_text: llmObj.summary_text || parsedRaw.summary_text || '',
+          };
+        }
+
+        // Default/fallback texts if LLM failed
+        const summaryText = (llmObj.summary_text && typeof llmObj.summary_text === 'string') ? llmObj.summary_text : '';
+        const bullets = (llmObj.bullets && llmObj.bullets.length) ? llmObj.bullets : [];
+        const summaryBlock = summaryText ? `<div class="list-item">${summaryText}</div>` : '';
+        const bulletBlock = bullets.length ? bullets.map(b => `<div class="list-item">${b}</div>`).join('') : '<div class="muted">데이터 없음</div>';
+        llmSummaryEl.innerHTML = summaryBlock + bulletBlock;
+
+        renderStats(stats);
+        // Prefer heuristic stats for robustness; show LLM tops if present below.
+        renderTop(stats.top_positive_reviews, topPosEl);
+        renderTop(stats.top_negative_reviews, topNegEl);
+
+        // If LLM provided tops, show them as additional context
+        const hasLLMTops = (llmObj.top_positive_reviews && llmObj.top_positive_reviews.length) ||
+                           (llmObj.top_negative_reviews && llmObj.top_negative_reviews.length);
+        if (hasLLMTops) {
+          const wrap = document.createElement('div');
+          wrap.innerHTML = `<div class="section-title" style="margin-top:12px;">LLM 판단 Top 리뷰 (참고)</div>
+            <div class="two-col">
+              <div><div class="section-title">LLM 긍정</div><div id="llmTopPos"></div></div>
+              <div><div class="section-title">LLM 부정</div><div id="llmTopNeg"></div></div>
+            </div>`;
+          document.getElementById('resultSection').insertBefore(wrap, document.getElementById('teamInsights') || document.getElementById('resetBtn'));
+          renderTop(llmObj.top_positive_reviews, document.getElementById('llmTopPos'));
+          renderTop(llmObj.top_negative_reviews, document.getElementById('llmTopNeg'));
+        }
+
+        // Team insights section (always near bottom but above reset)
+        let teamWrap = document.getElementById('teamInsights');
+        if (!teamWrap) {
+          teamWrap = document.createElement('div');
+          teamWrap.id = 'teamInsights';
+          teamWrap.innerHTML = `<div class="section-title" style="margin-top:12px;">팀별 인사이트</div>
+            <div class="two-col">
+              <div><div class="section-title">개발팀</div><div id="devInsights" class="muted"></div></div>
+              <div><div class="section-title">기획/사업/운영</div><div id="bizInsights" class="muted"></div></div>
+            </div>`;
+          document.getElementById('resultSection').insertBefore(teamWrap, document.getElementById('resetBtn'));
+        }
+        const devEl = document.getElementById('devInsights');
+        const bizEl = document.getElementById('bizInsights');
+        const ti = llmObj.team_insights || {};
+        const devList = (ti.dev && ti.dev.length ? ti.dev : []);
+        const bizList = (ti.biz && ti.biz.length ? ti.biz : []);
+        const opsList = (ti.ops && ti.ops.length ? ti.ops : []);
+        devEl.innerHTML = (devList.length ? devList : ["데이터 없음"]).map(t => `<div class="list-item">${t}</div>`).join('');
+        const mergedBizOps = bizList.concat(opsList);
+        bizEl.innerHTML = (mergedBizOps.length ? mergedBizOps : ["데이터 없음"]).map(t => `<div class="list-item">${t}</div>`).join('');
+        show('result');
+      } catch (err) {
+        alert('에러: ' + err);
+        show('form');
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+    resetBtn.addEventListener('click', () => {
+      show('form');
+      llmSummaryEl.textContent = '';
+      statsGrid.innerHTML = '';
+      topPosEl.innerHTML = '';
+      topNegEl.innerHTML = '';
+    });
+
+    function renderExamples() {
+      const examples = [
+        { store: 'apple', name: 'YouTube', id: '544007664', country: 'us / kr' },
+        { store: 'apple', name: 'TikTok', id: '835599320', country: 'us / kr' },
+        { store: 'apple', name: 'Instagram', id: '389801252', country: 'us / kr' },
+        { store: 'apple', name: 'Gmail', id: '422689480', country: 'us / kr' },
+        { store: 'apple', name: 'Netflix', id: '363590051', country: 'us / kr' },
+        { store: 'google', name: 'YouTube', id: 'com.google.android.youtube', country: 'us / kr' },
+        { store: 'google', name: 'TikTok', id: 'com.zhiliaoapp.musically', country: 'us / kr' },
+        { store: 'google', name: 'Instagram', id: 'com.instagram.android', country: 'us / kr' },
+        { store: 'google', name: 'Gmail', id: 'com.google.android.gm', country: 'us / kr' },
+        { store: 'google', name: 'Netflix', id: 'com.netflix.mediaclient', country: 'us / kr' },
+      ];
+      const appleCol = document.createElement('div');
+      appleCol.innerHTML = `<div class="section-title">App Store</div>` +
+        examples.filter(e => e.store === 'apple').map(e =>
+          `<div class="list-item"><span class="pill pill-blue">apple</span> ${e.name} · ${e.id} · ${e.country}</div>`
+        ).join('');
+      const googleCol = document.createElement('div');
+      googleCol.innerHTML = `<div class="section-title">Google Play</div>` +
+        examples.filter(e => e.store === 'google').map(e =>
+          `<div class="list-item"><span class="pill pill-green">google</span> ${e.name} · ${e.id} · ${e.country}</div>`
+        ).join('');
+      examplesContainer.appendChild(appleCol);
+      examplesContainer.appendChild(googleCol);
+    }
+
+    function tryParseLLM(raw) {
+      if (!raw || typeof raw !== 'string') return {};
+      let cleaned = raw.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/```json/g, '').replace(/```/g, '').trim();
+      }
+      try { return JSON.parse(cleaned); } catch {}
+      // try to extract first JSON object
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start !== -1 && end !== -1 && end > start) {
+        try { return JSON.parse(cleaned.slice(start, end + 1)); } catch {}
+      }
+      return {};
+    }
+
+    // 초기 화면
+    show('form');
+    renderExamples();
+  </script>
+</body>
+</html>

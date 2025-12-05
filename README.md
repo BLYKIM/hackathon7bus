@@ -10,6 +10,7 @@ Google Play와 Apple App Store의 공개 리뷰를 JSON Lines 형태로 수집�
 - JSON Lines 출력(파일 또는 stdout), `--install-missing`로 의존성 자동 설치 지원
 - Google Play 언어 설정: 국가코드에 따라 lang을 자동 매핑(KR→ko, US/UK→en 등)
 - 앱 이름은 파일명/출력용으로 소문자 ASCII 슬러그로 정규화(e.g., "TikTok - Videos, Shop & LIVE" → "tiktok-videos-shop-live")
+- OpenAI 연동을 위한 분석 모듈/엔드포인트 추가(요약 등)
 
 ## 설치/준비
 로컬에 Python 3.10+ 권장. 필요 시 의존성 자동 설치 옵션 사용:
@@ -57,13 +58,37 @@ python3 fetch_reviews.py \
 ```
 - 출력 경로는 자동으로 `outputs/{store}_{appId}_{appName}_{country}_{UTCYYYYMMDDHHMM}.jsonl`로 생성됩니다(UTC 기준, 분 단위, app_name이 없으면 app_id를 사용).
 - `--max-pages`는 스토어/라이브러리 페이지 개념에 맞춰 반복 호출 횟수로 해석
+- API 서버로 사용하려면 FastAPI/uvicorn을 설치 후 실행:
+  ```bash
+  # 자동 설치 옵션 포함 실행
+  python3 run_api.py --install-missing --port 8000
+  # 또는 직접 실행
+  python3 -m pip install fastapi uvicorn
+  python3 -m uvicorn api.main:app --reload --port 8000
+  ```
+  호출 예시:
+  ```bash
+  curl -X POST "http://localhost:8000/fetch" \
+    -H "Content-Type: application/json" \
+    -d '{"store":"apple","app_name":"TikTok","country":"us","max_pages":1,"install_missing":true}'
+  ```
+  요약/분석 예시(저장된 JSONL 사용, OPENAI_API_KEY 필요):
+  ```bash
+  curl -X POST "http://localhost:8000/analyze" \
+    -H "Content-Type: application/json" \
+    -d '{"file_path":"outputs/app-store_1235601864_tiktok_kr_202512050319.jsonl","max_items":30,"install_missing":true}'
+  ```
 
 ## 모듈 구조
 - `reviews_crawler/models.py`: `ReviewRecord` 정의 및 시간/직렬화 헬퍼
 - `reviews_crawler/google_play_client.py`: Google Play 리뷰 수집 래퍼
 - `reviews_crawler/apple_app_store_client.py`: Apple 리뷰 RSS 수집기
 - `reviews_crawler/cli.py`: argparse 기반 CLI, `--install-missing` 지원
+- `api/main.py`: FastAPI 기반 로컬 API 서버(POST /fetch, POST /analyze, GET /health)
 - `fetch_reviews.py`: 실행 진입점
+- `run_api.py`: API 서버 실행 스크립트(부족한 패키지 자동 설치 옵션)
+- `reviews_crawler/analysis_service.py`: JSONL 리뷰 파싱 및 OpenAI 요약 호출
+- `reviews_crawler/config.py`: OpenAI 키/모델/최대 리뷰 수 설정 로더
 
 ## 출력/결과 확인
 - 모든 실행 결과는 자동으로 `outputs/` 아래에 저장됩니다.

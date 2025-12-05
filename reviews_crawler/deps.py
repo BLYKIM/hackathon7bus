@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_PLAY_PACKAGE = "google-play-scraper"
 REQUESTS_PACKAGE = "requests"
+FASTAPI_PACKAGE = "fastapi"
+UVICORN_PACKAGE = "uvicorn"
+OPENAI_PACKAGE = "openai"
 
 
 def _is_installed(module_name: str) -> bool:
@@ -58,5 +61,28 @@ def ensure_dependencies(store: str, auto_install: bool) -> None:
         )
         raise SystemExit(1)
 
+    if not _pip_install(missing):
+        raise SystemExit(1)
+
+
+def ensure_api_dependencies(auto_install: bool) -> None:
+    """
+    Ensure FastAPI/uvicorn exist for running the API server.
+    """
+    missing = []
+    if not _is_installed("fastapi"):
+        missing.append(FASTAPI_PACKAGE)
+    if not _is_installed("uvicorn"):
+        missing.append(UVICORN_PACKAGE)
+    if not _is_installed("openai"):
+        missing.append(OPENAI_PACKAGE)
+    if not missing:
+        return
+    if not auto_install:
+        logger.error(
+            "Missing required packages for API server: %s. Re-run with --install-missing to auto-install.",
+            ", ".join(missing),
+        )
+        raise SystemExit(1)
     if not _pip_install(missing):
         raise SystemExit(1)
